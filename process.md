@@ -59,3 +59,39 @@ Distinct values confirmed:
 - `status`: `completed`, `refunded`, `test`
 - `channel`: `marketplace`, `web`, `mobile_app`
 - `country`: `RO`, `BG`, `DE`, `HU`
+
+# Step 2: Clean
+ 
+## Goal
+Build `orders_clean` from `orders_raw`, resolving the issues found during exploration.
+ 
+## Further investigation
+- Checked for structural inconsistencies that a single-column `DISTINCT` wouldn't catch: whether `order_id` ever maps to more than one `customer_id`, whether `sku` ever maps to more than one `product_name`, and whitespace/casing issues in categorical fields. All came back clean.
+- Checked `unit_price` and `qty` ranges for outliers. `qty` ranged -3 to 3 (already covered by the ≤0 rule). `unit_price` had a max of 999999 — pulled the affected rows and found the same value (`999999`) across 13 rows spanning unrelated products (a serum, an air fryer, a book, dumbbells). No real price signal, so treated as a sentinel/placeholder value rather than a genuine price.
+
+## Cleaning decisions
+ 
+| Issue | Count | Handling |
+|---|---|---|
+| `customer_id` is NULL | 103 rows | Kept in table, excluded from customer-spend aggregation downstream |
+| `category` is NULL | 79 rows | Filled as `'Unknown'` |
+| `qty` ≤ 0 | 167 rows | Dropped |
+| `unit_price` ≤ 0 | 24 rows | Dropped |
+| `unit_price = 999999` | 13 rows | Dropped — sentinel/placeholder value, not a real price |
+| `status = 'test'` | 101 rows | Dropped |
+| `status = 'refunded'` | 403 rows | Kept in table, excluded from revenue totals downstream |
+| `order_ts` mixed formats | all rows | Normalized to a single timestamp type |
+| Exact full-row duplicates | 183 groups (366 rows) | De-duplicated with `DISTINCT` |
+ 
+`refunded` and NULL `customer_id`/`category` rows are kept in `orders_clean` rather than deleted — they're valid records, just excluded from spend/revenue totals in later steps. Keeps the table auditable.
+ 
+## Result (`clean.py`)
+```
+orders_raw:   9268 rows
+orders_clean: 8787 rows
+Dropped:      481 rows
+  - rows with NULL customer_id (kept, excluded downstream): 94
+  - refunded rows (kept, excluded downstream): 398
+  - rows with category filled as 'Unknown': 76
+```
+481 dropped is less than the sum of individual issue counts above (~671) because of overlap — e.g. a row can be both `status = 'test'` and have a bad price, counted once. Same reason the NULL customer_id, refunded, and Unknown counts shifted slightly from the raw numbers.

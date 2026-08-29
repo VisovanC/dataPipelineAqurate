@@ -69,12 +69,58 @@ QUERIES = {
         HAVING COUNT(*) > 1
         LIMIT 10;
     """,
+    "order_id maps to multiple customer_ids": """
+        SELECT order_id, COUNT(DISTINCT customer_id) AS distinct_customers
+        FROM orders_raw
+        WHERE customer_id IS NOT NULL
+        GROUP BY order_id
+        HAVING COUNT(DISTINCT customer_id) > 1
+        LIMIT 10;
+    """,
+    "sku maps to multiple product names": """
+        SELECT sku, COUNT(DISTINCT product_name) AS distinct_names
+        FROM orders_raw
+        GROUP BY sku
+        HAVING COUNT(DISTINCT product_name) > 1
+        LIMIT 10;
+    """,
+    "whitespace/case issues in categorical fields": """
+        SELECT DISTINCT currency, status, channel, country
+        FROM orders_raw
+        WHERE currency != TRIM(currency) OR currency != UPPER(currency)
+           OR status != TRIM(status)
+           OR channel != TRIM(channel)
+           OR country != TRIM(country) OR country != UPPER(country)
+        LIMIT 10;
+    """,
+    "outlier unit_price / qty": """
+        SELECT MIN(unit_price::float), MAX(unit_price::float),
+               MIN(qty::int), MAX(qty::int)
+        FROM orders_raw
+        WHERE unit_price ~ '^-?[0-9]+(\\.[0-9]+)?$' AND qty ~ '^-?[0-9]+$';
+    """,
+    "customer_id consistent format": """
+        SELECT DISTINCT customer_id FROM orders_raw
+        WHERE customer_id IS NOT NULL AND customer_id !~ '^[0-9]+$'
+        LIMIT 10;
+    """,
 }
 
 
 def main():
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
+    cur.execute("""
+                    SELECT order_id, sku, product_name, unit_price, qty
+                    FROM orders_raw
+                    WHERE unit_price::float > 10000
+                    ORDER BY unit_price::float DESC
+                    LIMIT 20;
+    """)
+    for row in cur.fetchall():
+        print(row)
+    cur.execute("SELECT COUNT(*) FROM orders_raw WHERE unit_price = '999999';")
+    print(cur.fetchone())
 
     for label, query in QUERIES.items():
         print(f"\n--- {label} ---")
@@ -84,6 +130,8 @@ def main():
             print("(no rows)")
         for row in rows:
             print(row)
+
+            
 
     cur.close()
     conn.close()
