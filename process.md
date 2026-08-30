@@ -153,3 +153,30 @@ Top 10 customers by spend:
 ('1268', 1687.50)
 ('1289', 1681.87)
 ```
+
+# Step 5: Country/category breakdown
+
+## Goal
+Total EUR revenue by country, for orders where category is "Books" or "Electronics", restricted to countries where the combined revenue exceeds €40,000, ranked by revenue.
+
+## Approach
+- Reused the same EUR-conversion logic from step 4 (LATERAL join to `fx_rates`, backward-fill on `fx_reference_date`), just grouped by `country` instead of `customer_id`, filtered to `category IN ('Books', 'Electronics')`.
+- Only `status = 'completed'` counts as revenue, same as step 4 — refunded orders excluded.
+- Applied the €40,000 threshold with `HAVING SUM(line_total_eur) > 40000` after grouping.
+
+## Result (`country_category.py`)
+Countries above the €40,000 threshold:
+```
+('RO', 147491.43)
+('HU', 40937.50)
+```
+
+For reference, all countries' Books/Electronics revenue (including the ones filtered out):
+```
+('RO', 147491.43)
+('HU', 40937.50)
+('DE', 38614.96)
+('BG', 32824.25)
+```
+
+HU clears the threshold by only ~€937, and DE misses it by ~€1,385 — close enough on both sides that the €40,000 cut is doing real filtering work here, not just a formality.
