@@ -1,3 +1,5 @@
+This file serves as documentation in the creation process of the pipeline.
+
 # Step 1: Ingest
 
 ## Goal
@@ -39,7 +41,7 @@ Note: there is no single `amount` column — line-item total must be derived as 
 - Being that duplicates were discovered, I decided to look at all distinct values.
 - Tested data quality (nulls, bad numeric formats, mixed date formats, duplicates), results can be seen below.
 
-## Data issues found during exploration (informing the upcoming `orders_clean` step)
+## Data issues found during exploration
 
 | Issue | Count | Notes |
 |---|---|---|
