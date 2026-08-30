@@ -180,3 +180,22 @@ For reference, all countries' Books/Electronics revenue (including the ones filt
 ```
 
 HU clears the threshold by only ~€937, and DE misses it by ~€1,385 — close enough on both sides that the €40,000 cut is doing real filtering work here, not just a formality.
+
+# Step 6: Automate
+
+## Goal
+Set the tables from steps 4 and 5 to refresh daily. `orders_raw` is static for this exercise, but some `fx_reference_date` values are in the future to simulate change, so the refresh needs to re-pull FX rates too, not just re-run the aggregations.
+
+## Approach
+- Went with a GitHub Actions scheduled workflow instead of Supabase's `pg_cron` — the repo was already set up, it's free, it's easy to see run history for monitoring, and it's trivial to tear down (just delete or disable the workflow) once the exercise window is over.
+- Combined the three existing scripts into one entrypoint (`refresh.py`) rather than duplicating logic: it calls `fx.py`, then `spend.py`, then `country_category.py` in sequence, so a daily run always refreshes FX rates first and rebuilds both derived tables on top of the latest rates.
+- Added a `pipeline_runs` table that logs every run (timestamp, success/failure, error detail if any). Directly feeds the monitoring question in step 7 — if a run silently failed, this table shows the gap, and GitHub Actions also emails automatically on a failed scheduled run.
+
+## Setup (`daily-refresh.yml`)
+- Workflow file lives at `.github/workflows/daily-refresh.yml`, runs daily at 06:00 UTC via cron, plus `workflow_dispatch` for manual triggering (used this to test it before trusting the schedule).
+- `DATABASE_URL` stored as a GitHub Actions repository secret rather than committed — same connection string as the local `.env`.
+- Installs dependencies from `requirements.txt` (`psycopg2-binary`, `python-dotenv`, `requests`), then runs `python refresh.py`.
+
+## Notes
+- `fx.py`'s date range is currently hardcoded to the range found during step 3's exploration (clamped to `date.today()`), which is correct for this static dataset — in a live system with incoming orders, that range would need to be derived dynamically from `orders_clean` instead of hardcoded.
+- Per the spec, this doesn't need to run indefinitely — plan is to disable/delete the workflow after a few days of the exercise window rather than leave it running.
