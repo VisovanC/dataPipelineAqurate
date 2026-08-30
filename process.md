@@ -95,3 +95,61 @@ Dropped:      481 rows
   - rows with category filled as 'Unknown': 76
 ```
 481 dropped is less than the sum of individual issue counts above (~671) because of overlap — e.g. a row can be both `status = 'test'` and have a bad price, counted once. Same reason the NULL customer_id, refunded, and Unknown counts shifted slightly from the raw numbers.
+
+# Step 3: Exchange rates
+
+## Goal
+Pull daily FX rates and store them, so orders in RON can be converted to EUR.
+
+## Investigation
+- Checked the `fx_reference_date` range in `orders_clean` and the currencies actually present, before pulling anything: range was 2026-08-23 to 2026-09-03 (12 distinct dates), only RON and EUR present. 2,889 rows had a future `fx_reference_date`.
+- Today is 2026-08-30, so dates from 2026-08-31 onward can't have a published rate yet — no FX source, real or free, can return a rate for a day that hasn't happened. Needed a fallback rule instead of just pulling exact-date matches.
+- Decided to use the most recent available rate on or before `fx_reference_date` (backward-fill). Standard approach for FX gaps, the same logic markets already use for weekends/holidays when no rate is published that day.
+
+## Ingestion (`fx.py`)
+- Pulled RON rates (base=EUR) from frankfurter.dev for 2026-08-23 to 2026-08-30 (clamped to today, since nothing later exists yet).
+- Got 6 days back instead of a full range — frankfurter doesn't publish weekend rates. 2026-08-23 snapped back to 2026-08-21 (last trading day), and 2026-08-29/30 are missing entirely, same reason. This is expected, not a bug — it's exactly the gap the backward-fill logic is meant to cover.
+- Stored as `fx_rates(rate_date, currency, rate_to_eur)`, where `rate_to_eur` is RON-per-1-EUR.
+
+## Rate-matching logic
+Used a `LATERAL` join to pick, for each order, the closest `fx_rates` row on or before its `fx_reference_date`:
+```sql
+LEFT JOIN LATERAL (
+  SELECT rate_date, rate_to_eur
+  FROM fx_rates
+  WHERE fx_rates.currency = oc.currency
+    AND fx_rates.rate_date <= oc.fx_reference_date
+  ORDER BY fx_rates.rate_date DESC
+  LIMIT 1
+) fx ON TRUE
+```
+Spot-checked against a sample of RON orders, weekend and future dates all correctly fell back to 2026-08-28 (last available rate), and orders with a `fx_reference_date` that was itself a trading day used that date's rate directly. Confirms the fallback logic is correct.
+
+# Step 4: Customer spend in EUR
+
+## Goal
+Build a table of total amount spent by each customer in EUR, converting non-EUR orders using the FX logic from step 3.
+
+## Conversion logic
+- `rate_to_eur` is RON-per-1-EUR, so converting a RON amount to EUR means **dividing** by the rate, not multiplying.
+- Excluded rows with NULL `customer_id` (can't attribute spend to a customer — 94 rows from step 2).
+- Excluded `status = 'refunded'` (398 rows from step 2) — not real spend.
+- Rounded the final EUR sum to 2 decimals — raw division produces long decimals, not how currency should be reported.
+
+## Result (`spend.py`)
+```
+customer_spend_eur: 1867 customers
+  RON line items converted: 1830
+
+Top 10 customers by spend:
+('1571', 2171.35)
+('1714', 2048.19)
+('1707', 1870.73)
+('836', 1829.39)
+('40', 1794.14)
+('1434', 1769.55)
+('578', 1754.07)
+('620', 1748.31)
+('1268', 1687.50)
+('1289', 1681.87)
+```
